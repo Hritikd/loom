@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>loom — watch a GPT think</title>
+<meta name="description" content="A GPT trained from scratch in pure NumPy, running live in your browser — generate Shakespeare and watch the attention heads think." />
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #11151f; --border: #232a3a;
+    --text: #e8e8e8; --dim: #8b93a7; --accent: #f0a842; --accent2: #5aa9e6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h1 .dot { color: var(--accent); }
+  .sub { color: var(--dim); margin: 0 0 22px; max-width: 72ch; }
+  .sub a { color: var(--accent2); text-decoration: none; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .panel h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--dim); margin: 0 0 12px; }
+  label { font-size: 12px; color: var(--dim); display: block; margin-bottom: 3px; }
+  input[type=text] {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px;
+  }
+  .row { display: flex; gap: 14px; margin-top: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .ctl { flex: 1; min-width: 110px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  select, button {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; font-size: 14px;
+  }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: #14100a;
+    font-weight: 600; padding: 9px 22px; cursor: pointer;
+  }
+  button.primary:disabled { opacity: .45; cursor: default; }
+  .presets { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .presets button { cursor: pointer; font-size: 12.5px; color: var(--dim); }
+  .presets button:hover { color: var(--text); border-color: var(--dim); }
+  #out {
+    min-height: 300px; max-height: 420px; overflow-y: auto; white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px;
+    line-height: 1.5; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px;
+  }
+  #out .prompt { color: var(--accent2); }
+  #status { font-size: 13px; color: var(--dim); margin-top: 10px; min-height: 18px; }
+  #status b { color: var(--accent); font-weight: 600; }
+  canvas { width: 100%; image-rendering: pixelated; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--border); }
+  .attn-note { font-size: 12.5px; color: var(--dim); margin-top: 10px; }
+  .footer { margin-top: 26px; font-size: 13px; color: var(--dim); }
+  .footer a { color: var(--accent2); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>loom<span class="dot">.</span></h1>
+  <p class="sub">
+    A GPT built from scratch in pure NumPy — every gradient derived by hand — trained on
+    Shakespeare and running <b>live in your browser</b>. Generate text, then inspect what each
+    attention head was looking at while it wrote. Part of a from-scratch LLM stack with
+    <a href="https://github.com/Hritikd/mosaic">mosaic</a> (tokenizer) and
+    <a href="https://github.com/Hritikd/nabla">nabla</a> (autograd) ·
+    <a href="https://github.com/Hritikd/loom">source on GitHub</a>.
+  </p>
+
+  <div class="panel" style="margin-bottom:18px">
+    <h2>Generate</h2>
+    <label for="prompt">Prompt</label>
+    <input id="prompt" type="text" value="ROMEO:" spellcheck="false" />
+    <div class="presets">
+      <button data-p="ROMEO:">ROMEO:</button>
+      <button data-p="JULIET:">JULIET:</button>
+      <button data-p="First Citizen:">First Citizen:</button>
+      <button data-p="Once more unto ">Once more unto…</button>
+    </div>
+    <div class="row">
+      <div class="ctl">
+        <label>Temperature: <span id="tval">0.8</span></label>
+        <input id="temp" type="range" min="0" max="1.5" step="0.05" value="0.8" />
+      </div>
+      <div class="ctl">
+        <label>Top-k: <span id="kval">40</span></label>
+        <input id="topk" type="range" min="1" max="65" step="1" value="40" />
+      </div>
+      <div class="ctl">
+        <label>Length</label>
+        <select id="len">
+          <option value="150" selected>150 chars</option>
+          <option value="300">300 chars</option>
+          <option value="600">600 chars</option>
+        </select>
+      </div>
+      <button id="go" class="primary" disabled>Generate</button>
+    </div>
+    <div id="status">loading Pyodide runtime (~10&nbsp;MB, one time)…</div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Output</h2>
+      <div id="out"></div>
+    </div>
+    <div class="panel">
+      <h2>Attention — what the model looked at</h2>
+      <div class="row" style="margin-top:0">
+        <div class="ctl"><label>Layer</label><select id="layer"></select></div>
+        <div class="ctl"><label>Head</label><select id="head"></select></div>
+      </div>
+      <canvas id="attn" width="640" height="640" style="margin-top:12px"></canvas>
+      <p class="attn-note">
+        Row <i>i</i> shows where the model attended while predicting the token after position
+        <i>i</i> (last 48 characters of the output). Brighter&nbsp;= more attention. The empty
+        upper triangle is causality: the model cannot see the future. Different heads learn
+        different habits — some watch the previous character, some scan for the start of the
+        line or the speaker's name.
+      </p>
+    </div>
+  </div>
+
+  <p class="footer">
+    Everything you see is computed by the same NumPy code that trained the model —
+    no framework, no server, no API. The model is a deliberately tiny ~350K-parameter,
+    character-level GPT: it writes plausible Shakespeare-shaped scenes, not good ones.
+    That's the point — it's small enough to read, train, and fully understand.
+  </p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const PYFILES = ["__init__.py", "tokenizer.py", "layers.py", "model.py", "optim.py", "checkpoint.py"];
+let py = null, cfg = null, busy = false;
+
+$("temp").oninput = () => $("tval").textContent = (+$("temp").value).toFixed(2);
+$("topk").oninput = () => $("kval").textContent = $("topk").value;
+document.querySelectorAll(".presets button").forEach(b =>
+  b.onclick = () => { $("prompt").value = b.dataset.p; });
+
+async function boot() {
+  const status = (m) => $("status").innerHTML = m;
+  try {
+    py = await loadPyodide();
+    status("loading NumPy…");
+    await py.loadPackage("numpy");
+    status("fetching loom source + model weights…");
+    py.FS.mkdirTree("/app/loom");
+    for (const f of PYFILES) {
+      const src = await (await fetch(`pysrc/loom/${f}`)).text();
+      py.FS.writeFile(`/app/loom/${f}`, src);
+    }
+    const w = await (await fetch("weights/loom-shakespeare.npz")).arrayBuffer();
+    py.FS.writeFile("/app/weights.npz", new Uint8Array(w));
+    status("loading checkpoint…");
+    await py.runPythonAsync(`
+import sys, json
+sys.path.insert(0, "/app")
+import numpy as np
+from loom.checkpoint import load
+from loom.model import forward, generate_stream, param_count
+
+PARAMS, CFG, TOK = load("/app/weights.npz")
+GEN, IDS = None, []
+
+def config_json():
+    return json.dumps({"n_layer": CFG.n_layer, "n_head": CFG.n_head,
+                       "params": param_count(PARAMS), "vocab": CFG.vocab_size})
+
+def start_gen(prompt, temperature, top_k, seed):
+    global GEN, IDS
+    ids = TOK.encode(prompt, errors="replace") or TOK.encode("\\n")
+    IDS = list(ids)
+    GEN = generate_stream(PARAMS, CFG, ids, 10_000,
+                          temperature=float(temperature),
+                          top_k=int(top_k), seed=int(seed))
+
+def next_chars(n):
+    out = []
+    for _ in range(int(n)):
+        try:
+            t = next(GEN)
+        except StopIteration:
+            break
+        IDS.append(t)
+        out.append(t)
+    return TOK.decode(out)
+
+def attn_json(layer, head, last_n):
+    t = max(2, min(len(IDS), CFG.block_size, int(last_n)))
+    window = np.array([IDS[-t:]])
+    _, _, _, attns = forward(PARAMS, CFG, window, return_attn=True)
+    a = attns[int(layer)][0, int(head)]
+    toks = [TOK.decode([i]) for i in window[0].tolist()]
+    return json.dumps({"attn": [[round(float(x), 4) for x in row] for row in a], "tokens": toks})
+`);
+    cfg = JSON.parse(py.runPython("config_json()"));
+    for (let i = 0; i < cfg.n_layer; i++) $("layer").add(new Option(`layer ${i}`, i));
+    for (let i = 0; i < cfg.n_head; i++) $("head").add(new Option(`head ${i}`, i));
+    $("layer").value = cfg.n_layer - 1; $("head").value = 0;
+    $("topk").max = cfg.vocab;
+    status(`ready — <b>${cfg.params.toLocaleString()}</b> parameters, trained from scratch in NumPy`);
+    $("go").disabled = false;
+  } catch (e) {
+    status("failed to load: " + e);
+  }
+}
+
+async function generate() {
+  if (busy || !py) return;
+  busy = true; $("go").disabled = true;
+  const prompt = $("prompt").value || "\n";
+  const want = +$("len").value;
+  const out = $("out");
+  out.innerHTML = `<span class="prompt"></span><span class="gen"></span>`;
+  out.querySelector(".prompt").textContent = prompt;
+  const genSpan = out.querySelector(".gen");
+  py.globals.get("start_gen")(prompt, +$("temp").value, +$("topk").value,
+                              Math.floor(Math.random() * 1e6));
+  let got = 0;
+  const t0 = performance.now();
+  while (got < want) {
+    const chunk = py.globals.get("next_chars")(Math.min(6, want - got));
+    if (!chunk.length) break;
+    got += chunk.length;
+    genSpan.textContent += chunk;
+    out.scrollTop = out.scrollHeight;
+    $("status").innerHTML = `writing… <b>${got}</b>/${want} chars`;
+    await new Promise(r => setTimeout(r, 0));
+  }
+  const secs = ((performance.now() - t0) / 1000).toFixed(1);
+  $("status").innerHTML = `wrote <b>${got}</b> characters in ${secs}s — now inspect the attention maps →`;
+  drawAttention();
+  busy = false; $("go").disabled = false;
+}
+
+function drawAttention() {
+  if (!py) return;
+  let data;
+  try {
+    data = JSON.parse(py.globals.get("attn_json")($("layer").value, $("head").value, 48));
+  } catch { return; }
+  const { attn, tokens } = data;
+  const t = tokens.length, cv = $("attn"), ctx = cv.getContext("2d");
+  const pad = 26, cell = (cv.width - pad) / t;
+  ctx.fillStyle = "#0b0e14"; ctx.fillRect(0, 0, cv.width, cv.height);
+  let max = 0;
+  for (const row of attn) for (const v of row) max = Math.max(max, v);
+  for (let i = 0; i < t; i++) {
+    for (let j = 0; j <= i; j++) {
+      const v = Math.pow(attn[i][j] / (max || 1), 0.6);
+      ctx.fillStyle = `rgba(240,168,66,${(0.04 + 0.96 * v).toFixed(3)})`;
+      if (attn[i][j] > 0) ctx.fillRect(pad + j * cell, pad + i * cell, Math.ceil(cell) - 1, Math.ceil(cell) - 1);
+    }
+  }
+  ctx.fillStyle = "#8b93a7";
+  ctx.font = `${Math.min(11, cell)}px ui-monospace, Menlo, monospace`;
+  ctx.textAlign = "center";
+  const label = (s) => s === "\n" ? "↵" : s === " " ? "·" : s;
+  for (let j = 0; j < t; j++) {
+    ctx.fillText(label(tokens[j]), pad + j * cell + cell / 2, pad - 8);
+    ctx.fillText(label(tokens[j]), pad / 2, pad + j * cell + cell / 2 + 3);
+  }
+}
+
+$("go").onclick = generate;
+$("layer").onchange = drawAttention;
+$("head").onchange = drawAttention;
+boot();
+</script>
+</body>
+</html>
