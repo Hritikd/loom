@@ -103,7 +103,7 @@ opt = AdamW(params, lr=1e-3)
 loss, grads = loss_and_grads(params, cfg, x, y)   # forward + hand-derived backward
 opt.step(params, grads)
 
-tokens = generate(params, cfg, prompt_ids, 200, temperature=0.8, top_k=40)
+tokens = generate(params, cfg, prompt_ids, 200, temperature=0.8, top_p=0.9)  # or top_k=40
 ```
 
 ## Measured results

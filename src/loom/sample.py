@@ -19,6 +19,9 @@ def main(argv=None):
     ap.add_argument("--tokens", type=int, default=400)
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--top-k", type=int, default=40)
+    ap.add_argument("--top-p", type=float, default=None,
+                    help="nucleus sampling: keep the smallest set of tokens whose "
+                         "probability mass reaches TOP_P (e.g. 0.9)")
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args(argv)
 
@@ -27,7 +30,7 @@ def main(argv=None):
     sys.stdout.write(args.prompt)
     for t in generate_stream(
         params, cfg, prompt_ids, args.tokens,
-        temperature=args.temperature, top_k=args.top_k, seed=args.seed,
+        temperature=args.temperature, top_k=args.top_k, top_p=args.top_p, seed=args.seed,
     ):
         sys.stdout.write(tok.decode([t]))
         sys.stdout.flush()

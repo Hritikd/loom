@@ -75,6 +75,23 @@ def test_top_k_restricts_support():
     assert greedy == topk1
 
 
+def test_top_p_tiny_collapses_to_greedy():
+    """A vanishing nucleus keeps only the single most-probable token."""
+    params = init_params(CFG, seed=5)
+    greedy = generate(params, CFG, [2, 7], 12, temperature=0.0)
+    nucleus = generate(params, CFG, [2, 7], 12, temperature=5.0, top_p=1e-9, seed=0)
+    assert greedy == nucleus
+
+
+def test_top_p_determinism_and_support():
+    params = init_params(CFG, seed=4)
+    a = generate(params, CFG, [5], 15, temperature=1.0, top_p=0.9, seed=11)
+    b = generate(params, CFG, [5], 15, temperature=1.0, top_p=0.9, seed=11)
+    c = generate(params, CFG, [5], 15, temperature=1.0, top_p=0.9, seed=12)
+    assert a == b  # same seed -> identical stream
+    assert a != c  # a narrowed-but-nontrivial nucleus still samples
+
+
 def test_loss_decreases_when_training():
     """60 AdamW steps on a repeating pattern must cut the loss sharply."""
     cfg = GPTConfig(vocab_size=5, block_size=8, n_layer=1, n_head=2, n_embd=8)

@@ -206,7 +206,7 @@ def loss_and_grads(params, cfg: GPTConfig, ids, targets):
 # ---------------------------------------------------------------------------
 
 
-def _sample_from_logits(logits, temperature, top_k, rng):
+def _sample_from_logits(logits, temperature, top_k, top_p, rng):
     if temperature <= 0.0:  # greedy
         return int(np.argmax(logits))
     logits = logits / temperature
@@ -214,6 +214,13 @@ def _sample_from_logits(logits, temperature, top_k, rng):
         kth = np.partition(logits, -top_k)[-top_k]
         logits = np.where(logits < kth, -np.inf, logits)
     probs = softmax(logits.astype(np.float64))
+    if top_p is not None and 0.0 < top_p < 1.0:
+        # nucleus: keep the smallest set of most-probable tokens whose mass
+        # reaches top_p, drop the rest of the tail. Always keeps >= 1 token.
+        order = np.argsort(probs)[::-1]  # indices high -> low probability
+        cum = np.cumsum(probs[order])
+        n_keep = int(np.searchsorted(cum, top_p)) + 1  # first index crossing p, inclusive
+        probs[order[n_keep:]] = 0.0
     return int(rng.choice(probs.size, p=probs / probs.sum()))
 
 
@@ -224,6 +231,7 @@ def generate_stream(
     max_new_tokens: int,
     temperature: float = 1.0,
     top_k: int | None = None,
+    top_p: float | None = None,
     seed: int | None = None,
     use_cache: bool = True,
 ):
@@ -250,7 +258,7 @@ def generate_stream(
         logits_row = logits[0, -1]
 
     for _ in range(max_new_tokens):
-        tok = _sample_from_logits(logits_row, temperature, top_k, rng)
+        tok = _sample_from_logits(logits_row, temperature, top_k, top_p, rng)
         ids.append(tok)
         yield tok
         if kv is not None and next_pos < cfg.block_size:
